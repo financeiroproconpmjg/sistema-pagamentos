@@ -239,7 +239,8 @@ elif menu == "📝 Lançamentos (CRUD)":
                 ws_history.append_row([
                     len(ws_history.get_all_values()) + 1,
                     new_id,
-                    ctr_sel,,
+                    ctr_sel,
+                    "N/A",
                     sub_id,
                     "NOVO_REGISTRO",
                     init_st,
