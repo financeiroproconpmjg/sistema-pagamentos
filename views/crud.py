@@ -120,11 +120,16 @@ def render_crud():
                         if not df_sub.empty
                         else pd.DataFrame()
                     )
-                    default_val = (
-                        float(match_sub["value"].values[0])
-                        if not match_sub.empty
-                        else 0.0
-                    )
+
+                    # Trata o valor do sub-empenho limpando pontuação PT-BR
+                    default_val = 0.0
+                    if not match_sub.empty and "value" in match_sub.columns:
+                        raw_val = str(match_sub["value"].values[0])
+                        clean_val = raw_val.replace(".", "").replace(",", ".")
+                        try:
+                            default_val = float(clean_val)
+                        except ValueError:
+                            default_val = 0.0
 
                     paid_val_input = st.number_input(
                         "Valor Final Efetuado (R$)",
