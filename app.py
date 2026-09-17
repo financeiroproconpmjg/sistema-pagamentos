@@ -1,4 +1,5 @@
 import streamlit as st
+from streamlit_option_menu import option_menu
 from views.audit import render_audit
 from views.crud import render_crud
 from views.dashboard import render_dashboard
@@ -9,6 +10,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# --- AUTENTICAÇÃO / LOGIN ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
@@ -27,23 +29,31 @@ if not st.session_state.logged_in:
                 st.error("Usuário ou senha incorretos.")
     st.stop()
 
-st.sidebar.title(f"👤 Usuário: {st.session_state.user}")
-if st.sidebar.button("Sair / Logout"):
-    st.session_state.logged_in = False
-    st.rerun()
+# --- SIDEBAR E NAVEGAÇÃO ---
+with st.sidebar:
+    st.markdown(f"### 👤 {st.session_state.user}")
 
-menu = st.sidebar.radio(
-    "Menu Principal",
-    [
-        "📊 Dashboard Matricial",
-        "📝 Lançamentos (CRUD)",
-        "📜 Histórico de Auditoria",
-    ],
-)
+    menu = option_menu(
+        menu_title="Navegação",
+        options=[
+            "Dashboard Matricial",
+            "Lançamentos (CRUD)",
+            "Histórico de Auditoria",
+        ],
+        icons=["bar-chart-fill", "pencil-square", "shield-check"],
+        menu_icon="compass-fill",
+        default_index=0,
+    )
 
-if menu == "📊 Dashboard Matricial":
+    st.markdown("---")
+    if st.button("Sair / Logout", use_container_width=True):
+        st.session_state.logged_in = False
+        st.rerun()
+
+# --- ROTEAMENTO DE TELAS ---
+if menu == "Dashboard Matricial":
     render_dashboard()
-elif menu == "📝 Lançamentos (CRUD)":
+elif menu == "Lançamentos (CRUD)":
     render_crud()
-elif menu == "📜 Histórico de Auditoria":
+elif menu == "Histórico de Auditoria":
     render_audit()
