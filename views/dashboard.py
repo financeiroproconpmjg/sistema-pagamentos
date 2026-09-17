@@ -27,6 +27,35 @@ def render_dashboard():
     df_payments, _ = load_table("PAGAMENTOS")
     df_sub, _ = load_table("SUB_EMPENHO")
     df_eg, _ = load_table("EMPENHO_GLOBAL")
+    df_company, _ = load_table("COMPANY")
+
+    # Mapeamento de CNPJ para Nome da Empresa (Razão Social)
+    cnpj_to_name = {}
+    if not df_company.empty:
+        cnpj_col = next(
+            (c for c in ["cnpj", "company_cnpj"] if c in df_company.columns),
+            None,
+        )
+        name_col = next(
+            (
+                c
+                for c in [
+                    "company_name",
+                    "razao_social",
+                    "nome",
+                    "name",
+                    "company",
+                ]
+                if c in df_company.columns
+            ),
+            None,
+        )
+        if cnpj_col and name_col:
+            for _, r in df_company.iterrows():
+                c_val = str(r[cnpj_col]).strip()
+                n_val = str(r[name_col]).strip()
+                if c_val and n_val:
+                    cnpj_to_name[c_val] = n_val
 
     # --- FILTROS DE TOPO ---
     c1, c2 = st.columns(2)
@@ -37,9 +66,15 @@ def render_dashboard():
         if not df_contracts.empty
         else []
     )
+
+    def format_emp_option(cnpj):
+        name = cnpj_to_name.get(str(cnpj).strip())
+        return f"{name} ({cnpj})" if name else str(cnpj)
+
     emp_selected = c2.multiselect(
-        "Filtrar por Empresa (CNPJ)",
+        "Filtrar por Empresa",
         options=options_emp,
+        format_func=format_emp_option,
         placeholder="Selecione uma ou mais empresas (vazio = TODAS)",
     )
 
@@ -146,8 +181,8 @@ def render_dashboard():
 
     st.markdown("---")
 
-    # --- GRÁFICO DE LINHA: EVOLUÇÃO MÊS A MÊS POR EMPRESA (ORDEM CRONOLÓGICA CORRIGIDA) ---
-    st.subheader("📈 Linha do Tempo: Evolução dos Pagamentos (JAN - DEZ)")
+    # --- GRÁFICO DE LINHA: EVOLUÇÃO MÊS A MÊS POR EMPRESA ---
+    st.subheader(f"📈 Linha do Tempo: Evolução dos Pagamentos {ano_selected}")
     meses_cods = [f"{m:02d}/{ano_selected}" for m in range(1, 13)]
     meses_names = [
         "JAN",
@@ -173,16 +208,21 @@ def render_dashboard():
             .str.replace("-", "/", regex=False)
         )
 
-        # Agrupa por Empresa (CNPJ)
         empresas_ativas = df_contracts["company_cnpj"].dropna().unique()
-
         chart_data = pd.DataFrame({"Mês": meses_names})
+        company_cols = []
 
         for emp in empresas_ativas:
-            ctrs_emp = df_contracts[df_contracts["company_cnpj"] == emp][
-                "contract_number"
-            ].tolist()
+            emp_clean = str(emp).strip()
+            emp_name = cnpj_to_name.get(emp_clean, emp_clean)
+            col_label = emp_name
+
+            ctrs_emp = df_contracts[
+                df_contracts["company_cnpj"].astype(str).str.strip()
+                == emp_clean
+            ]["contract_number"].tolist()
             vals_mes = []
+
             for m_code in meses_cods:
                 m_month_num, m_year = m_code.split("/")
                 m_code_no_zero = f"{int(m_month_num)}/{m_year}"
@@ -197,16 +237,26 @@ def render_dashboard():
                 ]["paid_num"].sum()
                 vals_mes.append(v)
 
-            # Legenda usando o CNPJ/Empresa
-            chart_data[f"CNPJ: {emp}"] = vals_mes
+            chart_data[col_label] = vals_mes
+            company_cols.append(col_label)
 
-        # FORÇA A ORDEM CRONOLÓGICA (JAN -> DEZ) IMPEDINDO ORDENAÇÃO ALFABÉTICA
+        # Força a ordem cronológica (JAN -> DEZ)
         chart_data["Mês"] = pd.Categorical(
             chart_data["Mês"], categories=meses_names, ordered=True
         )
         chart_data = chart_data.sort_values("Mês")
 
-        st.line_chart(chart_data, x="Mês")
+        # Filtra meses sem dados (remove meses em que a soma de todas as empresas é 0)
+        if company_cols:
+            chart_data["total_mes"] = chart_data[company_cols].sum(axis=1)
+            chart_data = chart_data[chart_data["total_mes"] > 0].drop(
+                columns=["total_mes"]
+            )
+
+        if not chart_data.empty and company_cols:
+            st.line_chart(chart_data, x="Mês")
+        else:
+            st.info("Sem pagamentos realizados para o período selecionado.")
     else:
         st.info("Sem dados de pagamentos para os contratos selecionados.")
 
@@ -229,9 +279,12 @@ def render_dashboard():
 
     for _, ctr in df_contracts.iterrows():
         ctr_num = str(ctr["contract_number"]).strip()
+        emp_cnpj = str(ctr["company_cnpj"]).strip()
+        emp_display = cnpj_to_name.get(emp_cnpj, emp_cnpj)
+
         row = {
             "Contrato": ctr_num,
-            "Empresa": str(ctr["company_cnpj"]).strip(),
+            "Empresa": emp_display,
         }
 
         for idx, m_code in enumerate(meses_cods):
@@ -268,11 +321,20 @@ def render_dashboard():
 
     def style_status(val):
         if val == "OK":
-            return "background-color: #15803d; color: white; font-weight: bold; text-align: center;"
+            return (
+                "background-color: #15803d; color: white; font-weight: bold;"
+                " text-align: center;"
+            )
         elif val == "---":
-            return "background-color: #cbd5e1; color: #475569; text-align: center;"
+            return (
+                "background-color: #cbd5e1; color: #475569; text-align:"
+                " center;"
+            )
         elif val != "":
-            return "background-color: #fef08a; color: #854d0e; font-weight: bold; text-align: center;"
+            return (
+                "background-color: #fef08a; color: #854d0e; font-weight: bold;"
+                " text-align: center;"
+            )
         return ""
 
     if not df_matrix.empty:
