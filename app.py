@@ -213,27 +213,46 @@ elif menu == "📝 Lançamentos (CRUD)":
 
     with t_create:
         st.subheader("Criar Registro de Pagamento")
+
+        # 1. Sugere o próximo ID de Sub-empenho (+1) de forma enxuta e segura
+        next_sub_id = (
+            int(pd.to_numeric(df_sub["id"], errors="coerce").max() + 1)
+            if not df_sub.empty
+            else 101
+        )
+
         with st.form("f_create"):
             ctr_sel = st.selectbox(
                 "Contrato", df_contracts["contract_number"].tolist()
             )
-            ref_m = st.text_input("Mês de Referência (MM-YYYY)", "03-2026")
-            sub_id = st.number_input("ID do Sub-empenho", value=101, step=1)
+            ref_m = st.text_input("Mês de Referência (MM/YYYY)", "03/2026")
+            sub_id = st.number_input(
+                "ID do Sub-empenho", value=next_sub_id, step=1
+            )
             p_val = st.number_input("Valor Pago (R$)", value=0.0, step=100.0)
             init_st = st.selectbox("Status Inicial", status_options)
             obs = st.text_area("Observação do Lançamento")
 
             if st.form_submit_button("Salvar no Banco"):
+                # 2. Busca o próximo ID de Pagamento (+1)
                 new_id = (
-                    int(pd.to_numeric(df_payments["id"]).max()) + 1
+                    int(
+                        pd.to_numeric(
+                            df_payments["id"], errors="coerce"
+                        ).max()
+                        + 1
+                    )
                     if not df_payments.empty
                     else 1001
                 )
-                cnpj_val = df_contracts[
-                    df_contracts["contract_number"] == ctr_sel
-                ]["company_cnpj"].values[0]
 
-                # Escreve a linha pura no Google Sheets
+                # 3. Recupera o CNPJ vinculado
+                match_cnpj = df_contracts[
+                    df_contracts["contract_number"] == ctr_sel
+                ]["company_cnpj"].values
+                cnpj_val = match_cnpj[0] if len(match_cnpj) > 0 else ""
+
+                # 4. Escreve a linha na aba PAGAMENTOS
                 ws_payments.append_row([
                     new_id,
                     sub_id,
@@ -243,24 +262,29 @@ elif menu == "📝 Lançamentos (CRUD)":
                     ref_m,
                     "Adiantado",
                     p_val,
-                    str(datetime.date.today()),
+                    str(datetime.date.today().strftime("%d/%m/%Y")),
                     init_st,
                 ])
 
-                # Grava Auditoria
+                # 5. Registra o histórico de auditoria na aba HISTORICO_STATUS
                 ws_history.append_row([
                     len(ws_history.get_all_values()) + 1,
                     new_id,
                     ctr_sel,
-                    "N/A",
+                    "N/A",  # Empenho Global
                     sub_id,
                     "NOVO_REGISTRO",
                     init_st,
-                    str(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                    str(
+                        datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                    ),
                     st.session_state.user,
                     f"Criação: {obs}",
                 ])
-                st.success("Pagamento inserido com sucesso!")
+
+                st.success(
+                    f"Pagamento #{new_id} criado com sucesso para o mês {ref_m}!"
+                )
                 st.cache_resource.clear()
 
     with t_update:
