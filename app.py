@@ -127,7 +127,7 @@ if menu == "📊 Dashboard Matricial":
     st.subheader("Acompanhamento Mês a Mês (JAN - DEZ)")
 
     # Construção da Matriz
-    meses_cods = [f"{m:02d}-{ano_selected}" for m in range(1, 13)]
+    meses_cods = [f"{m:02d}/{ano_selected}" for m in range(1, 13)]
     meses_names = [
         "JAN",
         "FEV",
