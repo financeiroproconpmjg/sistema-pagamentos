@@ -72,13 +72,15 @@ def render_dashboard():
 
     if not df_sub.empty and not df_eg.empty:
         df_sub = df_sub[
-            df_sub["empenho_global_id"].astype(str).isin(df_eg["id"].astype(str))
+            df_sub["empenho_global_id"]
+            .astype(str)
+            .isin(df_eg["id"].astype(str))
         ]
         df_sub["val_num"] = clean_num(df_sub["value"])
     else:
         df_sub["val_num"] = 0.0
 
-    # --- KPIS PRINCIPAIS (AGORA 100% SINCRONIZADOS COM O FILTRO) ---
+    # --- KPIS PRINCIPAIS ---
     pago_mask = df_payments["current_status"] == "PAGO"
     total_pago = df_payments[pago_mask]["paid_num"].sum()
     media_mensal = total_pago / 12
@@ -144,7 +146,7 @@ def render_dashboard():
 
     st.markdown("---")
 
-    # --- GRÁFICO DE LINHA: EVOLUÇÃO MÊS A MÊS ---
+    # --- GRÁFICO DE LINHA: EVOLUÇÃO MÊS A MÊS POR EMPRESA (ORDEM CRONOLÓGICA CORRIGIDA) ---
     st.subheader("📈 Linha do Tempo: Evolução dos Pagamentos (JAN - DEZ)")
     meses_cods = [f"{m:02d}/{ano_selected}" for m in range(1, 13)]
     meses_names = [
@@ -164,20 +166,47 @@ def render_dashboard():
 
     if not df_payments.empty and not df_contracts.empty:
         df_pago_ano = df_payments[pago_mask].copy()
+        df_pago_ano["ref_m_clean"] = (
+            df_pago_ano["reference_month"]
+            .astype(str)
+            .str.strip()
+            .str.replace("-", "/", regex=False)
+        )
+
+        # Agrupa por Empresa (CNPJ)
+        empresas_ativas = df_contracts["company_cnpj"].dropna().unique()
+
         chart_data = pd.DataFrame({"Mês": meses_names})
 
-        for ctr in df_contracts["contract_number"].unique():
+        for emp in empresas_ativas:
+            ctrs_emp = df_contracts[df_contracts["company_cnpj"] == emp][
+                "contract_number"
+            ].tolist()
             vals_mes = []
             for m_code in meses_cods:
+                m_month_num, m_year = m_code.split("/")
+                m_code_no_zero = f"{int(m_month_num)}/{m_year}"
+
                 v = df_pago_ano[
-                    (df_pago_ano["contract_number"] == ctr)
-                    & (df_pago_ano["reference_month"] == m_code)
+                    (df_pago_ano["contract_number"].isin(ctrs_emp))
+                    & (
+                        df_pago_ano["ref_m_clean"].isin(
+                            [m_code, m_code_no_zero]
+                        )
+                    )
                 ]["paid_num"].sum()
                 vals_mes.append(v)
-            chart_data[ctr] = vals_mes
 
-        chart_data.set_index("Mês", inplace=True)
-        st.line_chart(chart_data)
+            # Legenda usando o CNPJ/Empresa
+            chart_data[f"CNPJ: {emp}"] = vals_mes
+
+        # FORÇA A ORDEM CRONOLÓGICA (JAN -> DEZ) IMPEDINDO ORDENAÇÃO ALFABÉTICA
+        chart_data["Mês"] = pd.Categorical(
+            chart_data["Mês"], categories=meses_names, ordered=True
+        )
+        chart_data = chart_data.sort_values("Mês")
+
+        st.line_chart(chart_data, x="Mês")
     else:
         st.info("Sem dados de pagamentos para os contratos selecionados.")
 
@@ -186,22 +215,53 @@ def render_dashboard():
     # --- MATRIZ VISUAL MÊS A MÊS ---
     st.subheader("📋 Matriz de Status (JAN - DEZ)")
     matrix_data = []
+
+    if not df_payments.empty and "reference_month" in df_payments.columns:
+        df_payments_norm = df_payments.copy()
+        df_payments_norm["ref_m_clean"] = (
+            df_payments_norm["reference_month"]
+            .astype(str)
+            .str.strip()
+            .str.replace("-", "/", regex=False)
+        )
+    else:
+        df_payments_norm = pd.DataFrame()
+
     for _, ctr in df_contracts.iterrows():
+        ctr_num = str(ctr["contract_number"]).strip()
         row = {
-            "Contrato": ctr["contract_number"],
-            "Empresa": ctr["company_cnpj"],
+            "Contrato": ctr_num,
+            "Empresa": str(ctr["company_cnpj"]).strip(),
         }
+
         for idx, m_code in enumerate(meses_cods):
             m_name = meses_names[idx]
-            match = df_payments[
-                (df_payments["contract_number"] == ctr["contract_number"])
-                & (df_payments["reference_month"] == m_code)
-            ]
+            m_month_num, m_year = m_code.split("/")
+            m_code_no_zero = f"{int(m_month_num)}/{m_year}"
+
+            if not df_payments_norm.empty:
+                match = df_payments_norm[
+                    (
+                        df_payments_norm["contract_number"]
+                        .astype(str)
+                        .str.strip()
+                        == ctr_num
+                    )
+                    & (
+                        df_payments_norm["ref_m_clean"].isin(
+                            [m_code, m_code_no_zero]
+                        )
+                    )
+                ]
+            else:
+                match = pd.DataFrame()
+
             if not match.empty:
                 st_val = match.iloc[0]["current_status"]
                 row[m_name] = "OK" if st_val == "PAGO" else st_val
             else:
                 row[m_name] = "---"
+
         matrix_data.append(row)
 
     df_matrix = pd.DataFrame(matrix_data)
