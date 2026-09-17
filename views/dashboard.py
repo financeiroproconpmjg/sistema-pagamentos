@@ -19,6 +19,11 @@ def clean_num(series):
     return pd.to_numeric(s_cleaned, errors="coerce").fillna(0.0)
 
 
+def format_brl(val):
+    """Formata número no padrão monetário brasileiro R$ X.XXX,XX."""
+    return f"R$ {val:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+
+
 def render_dashboard():
     st.title("📊 Painel Geral de Contratos e Pagamentos")
 
@@ -117,18 +122,26 @@ def render_dashboard():
 
     # --- KPIS PRINCIPAIS ---
     pago_mask = df_payments["current_status"] == "PAGO"
-    total_pago = df_payments[pago_mask]["paid_num"].sum()
-    media_mensal = total_pago / 12
+    df_pago = df_payments[pago_mask]
+    total_pago = df_pago["paid_num"].sum() if not df_pago.empty else 0.0
 
-    total_sub_empenhado = df_sub["val_num"].sum()
+    # Média Mensal Paga calculada pela quantidade de meses efetivamente quitados
+    qtd_meses_pagos = (
+        df_pago["reference_month"].nunique() if not df_pago.empty else 0
+    )
+    media_mensal = (
+        (total_pago / qtd_meses_pagos) if qtd_meses_pagos > 0 else 0.0
+    )
+
+    total_sub_empenhado = df_sub["val_num"].sum() if not df_sub.empty else 0.0
     pendencias_count = (
         len(df_payments[~pago_mask]) if not df_payments.empty else 0
     )
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total Pago (Quitado)", f"R$ {total_pago:,.2f}")
-    k2.metric("Total Sub-Empenhado", f"R$ {total_sub_empenhado:,.2f}")
-    k3.metric("Média Mensal Paga", f"R$ {media_mensal:,.2f}")
+    k1.metric("Total Pago (Quitado)", format_brl(total_pago))
+    k2.metric("Total Sub-Empenhado", format_brl(total_sub_empenhado))
+    k3.metric("Média Mensal Paga", format_brl(media_mensal))
     k4.metric("Lançamentos Pendentes", pendencias_count)
 
     st.markdown("---")
@@ -160,12 +173,12 @@ def render_dashboard():
         pct_exec = (val_sub / val_eg * 100) if val_eg > 0 else 0.0
 
         m_eg1, m_eg2, m_eg3 = st.columns(3)
-        m_eg1.metric("Empenho Global Teto", f"R$ {val_eg:,.2f}")
-        m_eg2.metric("Total Sub-Empenhado", f"R$ {val_sub:,.2f}")
+        m_eg1.metric("Empenho Global Teto", format_brl(val_eg))
+        m_eg2.metric("Total Sub-Empenhado", format_brl(val_sub))
         m_eg3.metric(
             "Saldo A Empenhar",
-            f"R$ {saldo_restante:,.2f}",
-            delta=f"{pct_exec:.1f}% Usado",
+            format_brl(saldo_restante),
+            delta=f"{pct_exec:.1f}% Usado".replace(".", ","),
         )
 
         st.progress(min(1.0, pct_exec / 100))
@@ -246,7 +259,7 @@ def render_dashboard():
         )
         chart_data = chart_data.sort_values("Mês")
 
-        # Filtra meses sem dados (remove meses em que a soma de todas as empresas é 0)
+        # Filtra meses sem dados (remove meses futuros/sem pagamentos)
         if company_cols:
             chart_data["total_mes"] = chart_data[company_cols].sum(axis=1)
             chart_data = chart_data[chart_data["total_mes"] > 0].drop(
