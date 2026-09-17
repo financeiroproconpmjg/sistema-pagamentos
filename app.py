@@ -3,6 +3,7 @@ from streamlit_option_menu import option_menu
 from views.audit import render_audit
 from views.crud import render_crud
 from views.dashboard import render_dashboard
+from views.reports import render_reports
 
 st.set_page_config(
     page_title="Sistema de Gestão de Pagamentos",
@@ -38,9 +39,15 @@ with st.sidebar:
         options=[
             "Dashboard Matricial",
             "Lançamentos (CRUD)",
+            "Central de Relatórios",
             "Histórico de Auditoria",
         ],
-        icons=["bar-chart-fill", "pencil-square", "shield-check"],
+        icons=[
+            "bar-chart-fill",
+            "pencil-square",
+            "file-earmark-bar-graph",
+            "shield-check",
+        ],
         menu_icon="compass-fill",
         default_index=0,
     )
@@ -55,5 +62,7 @@ if menu == "Dashboard Matricial":
     render_dashboard()
 elif menu == "Lançamentos (CRUD)":
     render_crud()
+elif menu == "Central de Relatórios":
+    render_reports()
 elif menu == "Histórico de Auditoria":
     render_audit()
