@@ -21,6 +21,6 @@ A planilha deve conter exatamente as seguintes **6 abas** (com os nomes das colu
 
 ### 1. Clona o repositório e instala as dependências
 ```bash
-git clone [https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git](https://github.com/financeiroproconpmjg/sistema-pagamentos.git)
-cd sistema-pagamentos
+git clone [https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git](https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git)
+cd SEU_REPOSITORIO
 pip install -r requirements.txt
