@@ -1,9 +1,14 @@
 # views/reports.py
 import io
+import matplotlib
+import matplotlib.pyplot as plt
 from fpdf import FPDF
 import pandas as pd
 import streamlit as st
 from database import load_table
+
+# Configura backend headless do Matplotlib para evitar conflitos de thread
+matplotlib.use("Agg")
 
 
 def clean_num(series):
@@ -26,39 +31,78 @@ def format_brl(val):
   return f"R$ {val:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
 
-def safe_str(txt):
-  """Remove caracteres incompatíveis com a fonte padrão do PDF."""
-  if txt is None:
+def clean_pdf_text(text):
+  """Remove caracteres Unicode incompatíveis com Helvetica (troca travessão e marcadores por caracteres simples)."""
+  if text is None:
     return ""
-  s = str(txt)
-  return s.encode("latin-1", "replace").decode("latin-1")
+  s = (
+      str(text)
+      .replace("—", "-")
+      .replace("–", "-")
+      .replace("•", "-")
+      .replace("…", "...")
+  )
+  return s.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def generate_line_chart_img(chart_data):
+  """Gera imagem do gráfico de linha para o PDF."""
+  fig, ax = plt.subplots(figsize=(7.5, 3))
+  for col in chart_data.columns:
+    if col != "Mês":
+      ax.plot(
+          chart_data["Mês"],
+          chart_data[col],
+          marker="o",
+          linewidth=2,
+          label=col,
+      )
+
+  ax.set_title(
+      "Evolução Mês a Mês dos Pagamentos (R$)", fontsize=11, fontweight="bold"
+  )
+  ax.grid(True, linestyle="--", alpha=0.5)
+  ax.legend(loc="upper left", fontsize=8)
+  plt.tight_layout()
+
+  img_buf = io.BytesIO()
+  plt.savefig(img_buf, format="png", dpi=200)
+  plt.close(fig)
+  img_buf.seek(0)
+  return img_buf
 
 
 def generate_pdf_report(
-    empresas_str, df_payments_sub, df_contracts_sub, ano_sel
+    empresas_str,
+    df_payments_sub,
+    df_contracts_sub,
+    df_eg,
+    df_sub,
+    ano_sel,
+    chart_data,
 ):
-  """Gera o documento PDF na memória e retorna em bytes."""
+  """Gera o documento PDF formatado com gráficos e tabelas."""
   pdf = FPDF()
   pdf.add_page()
   pdf.set_auto_page_break(auto=True, margin=15)
 
-  # --- CABEÇALHO DO RELATÓRIO ---
+  # --- CABEÇALHO ---
   pdf.set_font("Helvetica", "B", 16)
   pdf.cell(
       0,
       10,
-      safe_str(f"RELATÓRIO EXECUTIVO DE PAGAMENTOS — {ano_sel}"),
+      clean_pdf_text(f"RELATÓRIO EXECUTIVO DE PAGAMENTOS - {ano_sel}"),
       ln=True,
       align="C",
   )
 
   pdf.set_font("Helvetica", "", 10)
   pdf.cell(
-      0, 6, safe_str(f"Empresa(s): {empresas_str}"), ln=True, align="C"
+      0, 6, clean_pdf_text(f"Empresa(s): {empresas_str}"), ln=True, align="C"
   )
-  pdf.ln(6)
+  pdf.ln(4)
 
-  # --- RESUMO FINANCEIRO (KPIS) ---
+  # --- RESUMO FINANCEIRO ---
   pago_mask = (
       (df_payments_sub["current_status"] == "PAGO")
       if not df_payments_sub.empty
@@ -71,55 +115,70 @@ def generate_pdf_report(
   tot_lanctos = len(df_payments_sub) if not df_payments_sub.empty else 0
 
   pdf.set_font("Helvetica", "B", 12)
-  pdf.cell(0, 8, safe_str("1. Resumo Orçamentário"), ln=True)
+  pdf.cell(0, 8, clean_pdf_text("1. Resumo Orçamentário"), ln=True)
 
   pdf.set_font("Helvetica", "", 10)
   pdf.cell(
       0,
       6,
-      safe_str(f"• Total de Contratos Monitorados: {len(df_contracts_sub)}"),
+      clean_pdf_text(f"- Total de Contratos Monitorados: {len(df_contracts_sub)}"),
       ln=True,
   )
   pdf.cell(
-      0, 6, safe_str(f"• Total de Lançamentos Registrados: {tot_lanctos}"), ln=True
+      0,
+      6,
+      clean_pdf_text(f"- Total de Lançamentos Registrados: {tot_lanctos}"),
+      ln=True,
   )
   pdf.cell(
-      0, 6, safe_str(f"• Total Pago/Quitado: {format_brl(tot_pago)}"), ln=True
+      0,
+      6,
+      clean_pdf_text(f"- Total Pago/Quitado: {format_brl(tot_pago)}"),
+      ln=True,
   )
-  pdf.ln(6)
+  pdf.ln(4)
+
+  # --- GRÁFICO DE EVOLUÇÃO NO PDF ---
+  if not chart_data.empty and len(chart_data.columns) > 1:
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(
+        0, 8, clean_pdf_text("2. Gráfico de Evolução dos Pagamentos"), ln=True
+    )
+
+    img_buf = generate_line_chart_img(chart_data)
+    pdf.image(img_buf, x=15, w=180)
+    pdf.ln(6)
 
   # --- TABELA DE DETALHAMENTO ---
   pdf.set_font("Helvetica", "B", 12)
-  pdf.cell(0, 8, safe_str("2. Detalhamento dos Pagamentos"), ln=True)
+  pdf.cell(0, 8, clean_pdf_text("3. Detalhamento dos Pagamentos"), ln=True)
 
-  # Cabeçalho da Tabela
   pdf.set_font("Helvetica", "B", 9)
-  pdf.cell(35, 7, safe_str("Contrato"), border=1, align="C")
-  pdf.cell(25, 7, safe_str("Mês Ref."), border=1, align="C")
-  pdf.cell(35, 7, safe_str("Valor (R$)"), border=1, align="C")
-  pdf.cell(30, 7, safe_str("Data Pgto"), border=1, align="C")
-  pdf.cell(65, 7, safe_str("Status Atual"), border=1, align="C", ln=True)
+  pdf.cell(35, 7, clean_pdf_text("Contrato"), border=1, align="C")
+  pdf.cell(25, 7, clean_pdf_text("Mês Ref."), border=1, align="C")
+  pdf.cell(35, 7, clean_pdf_text("Valor (R$)"), border=1, align="C")
+  pdf.cell(30, 7, clean_pdf_text("Data Pgto"), border=1, align="C")
+  pdf.cell(65, 7, clean_pdf_text("Status Atual"), border=1, align="C", ln=True)
 
-  # Linhas dos Dados
   pdf.set_font("Helvetica", "", 8)
   if not df_payments_sub.empty:
     for _, r in df_payments_sub.iterrows():
-      ctr = safe_str(r.get("contract_number", "---"))
-      m_ref = safe_str(r.get("reference_month", "---"))
+      ctr = clean_pdf_text(r.get("contract_number", "---"))
+      m_ref = clean_pdf_text(r.get("reference_month", "---"))
       v_pago = format_brl(r.get("paid_num", 0.0))
-      dt_pago = safe_str(r.get("payment_date", "---"))
-      st_val = safe_str(r.get("current_status", "---"))
+      dt_pago = clean_pdf_text(r.get("payment_date", "---"))
+      st_val = clean_pdf_text(r.get("current_status", "---"))
 
       pdf.cell(35, 6, ctr, border=1)
       pdf.cell(25, 6, m_ref, border=1, align="C")
-      pdf.cell(35, 6, safe_str(v_pago), border=1, align="R")
+      pdf.cell(35, 6, clean_pdf_text(v_pago), border=1, align="R")
       pdf.cell(30, 6, dt_pago, border=1, align="C")
       pdf.cell(65, 6, st_val, border=1, ln=True)
   else:
     pdf.cell(
         190,
         6,
-        safe_str("Nenhum lançamento encontrado para os filtros."),
+        clean_pdf_text("Nenhum lançamento encontrado para os filtros."),
         border=1,
         align="C",
         ln=True,
@@ -134,12 +193,14 @@ def render_reports():
   df_contracts, _ = load_table("CONTRACT")
   df_payments, _ = load_table("PAGAMENTOS")
   df_company, _ = load_table("COMPANY")
+  df_sub, _ = load_table("SUB_EMPENHO")
+  df_eg, _ = load_table("EMPENHO_GLOBAL")
 
   if df_contracts.empty:
     st.info("Nenhum contrato cadastrado para geração de relatórios.")
     return
 
-  # Mapeamento CNPJ -> Nome da Empresa (Razão Social)
+  # Mapeamento CNPJ -> Nome
   cnpj_to_name = {}
   if not df_company.empty:
     cnpj_col = next(
@@ -166,7 +227,6 @@ def render_reports():
         if c_val and n_val:
           cnpj_to_name[c_val] = n_val
 
-  # --- FILTROS DE RELATÓRIO ---
   col1, col2 = st.columns(2)
   ano_sel = col1.selectbox("Ano Exercício", [2026, 2025, 2024], index=0)
 
@@ -183,7 +243,6 @@ def render_reports():
       placeholder="Selecione uma ou mais empresas (vazio = TODAS)",
   )
 
-  # Filtragem dos Contratos
   if emp_selected:
     df_contracts_sub = df_contracts[
         df_contracts["company_cnpj"].isin(emp_selected)
@@ -202,7 +261,6 @@ def render_reports():
       else []
   )
 
-  # Filtragem dos Pagamentos
   if not df_payments.empty:
     df_pay_sub = df_payments[
         df_payments["contract_number"].isin(active_contracts)
@@ -210,6 +268,65 @@ def render_reports():
     df_pay_sub["paid_num"] = clean_num(df_pay_sub["paid_amount"])
   else:
     df_pay_sub = pd.DataFrame()
+
+  # Prepara dados do Gráfico de Evolução Mês a Mês para o PDF
+  meses_cods = [f"{m:02d}/{ano_sel}" for m in range(1, 13)]
+  meses_names = [
+      "JAN",
+      "FEV",
+      "MAR",
+      "ABR",
+      "MAI",
+      "JUN",
+      "JUL",
+      "AGO",
+      "SET",
+      "OUT",
+      "NOV",
+      "DEZ",
+  ]
+  chart_data = pd.DataFrame({"Mês": meses_names})
+
+  if not df_pay_sub.empty:
+    pago_mask = df_pay_sub["current_status"] == "PAGO"
+    df_pago_ano = df_pay_sub[pago_mask].copy()
+    df_pago_ano["ref_m_clean"] = (
+        df_pago_ano["reference_month"]
+        .astype(str)
+        .str.strip()
+        .str.replace("-", "/", regex=False)
+    )
+
+    empresas_ativas = df_contracts_sub["company_cnpj"].dropna().unique()
+    company_cols = []
+
+    for emp in empresas_ativas:
+      emp_clean = str(emp).strip()
+      emp_name = cnpj_to_name.get(emp_clean, emp_clean)
+
+      ctrs_emp = df_contracts_sub[
+          df_contracts_sub["company_cnpj"].astype(str).str.strip() == emp_clean
+      ]["contract_number"].tolist()
+      vals_mes = []
+
+      for m_code in meses_cods:
+        m_month_num, m_year = m_code.split("/")
+        m_code_no_zero = f"{int(m_month_num)}/{m_year}"
+
+        v = df_pago_ano[
+            (df_pago_ano["contract_number"].isin(ctrs_emp))
+            & (df_pago_ano["ref_m_clean"].isin([m_code, m_code_no_zero]))
+        ]["paid_num"].sum()
+        vals_mes.append(v)
+
+      chart_data[emp_name] = vals_mes
+      company_cols.append(emp_name)
+
+    if company_cols:
+      chart_data["total_mes"] = chart_data[company_cols].sum(axis=1)
+      chart_data = chart_data[chart_data["total_mes"] > 0].drop(
+          columns=["total_mes"]
+      )
 
   # --- PRÉ-VISUALIZAÇÃO ---
   st.markdown("---")
@@ -225,6 +342,9 @@ def render_reports():
   m1, m2 = st.columns(2)
   m1.metric("Lançamentos Encontrados", len(df_pay_sub))
   m2.metric("Total Pago Quitado", format_brl(tot_pago))
+
+  if not chart_data.empty and len(chart_data.columns) > 1:
+    st.line_chart(chart_data, x="Mês")
 
   if not df_pay_sub.empty:
     st.dataframe(
@@ -246,12 +366,17 @@ def render_reports():
 
   c_pdf, c_excel, c_csv = st.columns(3)
 
-  # 1. Download PDF
   pdf_bytes = generate_pdf_report(
-      empresas_header_str, df_pay_sub, df_contracts_sub, ano_sel
+      empresas_header_str,
+      df_pay_sub,
+      df_contracts_sub,
+      df_eg,
+      df_sub,
+      ano_sel,
+      chart_data,
   )
   c_pdf.download_button(
-      label="📄 Baixar Relatório em PDF",
+      label="📄 Baixar Relatório em PDF (com Gráfico)",
       data=pdf_bytes,
       file_name=f"Relatorio_Pagamentos_{ano_sel}.pdf",
       mime="application/pdf",
@@ -259,7 +384,6 @@ def render_reports():
       type="primary",
   )
 
-  # 2. Download Excel
   buffer = io.BytesIO()
   with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
     df_contracts_sub.to_excel(writer, sheet_name="Contratos", index=False)
@@ -275,7 +399,6 @@ def render_reports():
       use_container_width=True,
   )
 
-  # 3. Download CSV
   if not df_pay_sub.empty:
     csv_data = df_pay_sub.to_csv(index=False).encode("utf-8")
     c_csv.download_button(
