@@ -108,12 +108,24 @@ if menu == "📊 Dashboard Matricial":
 
     # KPIs
     if not df_payments.empty:
-        total_pago = pd.to_numeric(
-            df_payments[df_payments["current_status"] == "PAGO"][
-                "paid_amount"
-            ],
-            errors="coerce",
-        ).sum()
+        # 1. Filtra os pagamentos concluídos
+        pago_series = df_payments[df_payments["current_status"] == "PAGO"][
+            "paid_amount"
+        ]
+
+        # 2. Limpa formatação PT-BR (troca ponto de milhar por nada e vírgula por ponto)
+        pago_series_cleaned = (
+            pago_series.astype(str)
+            .str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+
+        # 3. Converte para número e realiza os cálculos
+        total_pago = (
+            pd.to_numeric(pago_series_cleaned, errors="coerce")
+            .fillna(0.0)
+            .sum()
+        )
         media_mensal = total_pago / 12
     else:
         total_pago, media_mensal = 0.0, 0.0
