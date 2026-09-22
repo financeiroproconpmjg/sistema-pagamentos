@@ -75,67 +75,112 @@ def render_crud():
     st.subheader("🔁 Cadastro Encadeado por Etapas")
 
     # -------------------------------------------------------------------------
-    # ETAPA 1: SELEÇÃO OU CRIAÇÃO DO CONTRATO
+    # ETAPA 1: SELEÇÃO OU CRIAÇÃO DO CONTRATO E EMPRESA
     # -------------------------------------------------------------------------
-    st.markdown("##### 1️⃣ Contrato")
+    st.markdown("##### 1️⃣ Contrato e Empresa")
     contracts_list = (
         df_contracts["contract_number"].tolist() if not df_contracts.empty else []
     )
     opt_contracts = ["[ + Criar Novo Contrato ]"] + contracts_list
 
     selected_contract_opt = st.selectbox(
-        "Selecione o Contrato ou Crie um Novo", options=opt_contracts, key="sb_ctr"
+        "Selecione o Contrato ou Crie um Novo",
+        options=opt_contracts,
+        key="sb_ctr",
     )
 
     if selected_contract_opt == "[ + Criar Novo Contrato ]":
-      with st.expander("📝 Formulário: Novo Contrato", expanded=True):
-        with st.form("f_new_contract"):
-          new_ctr_num = st.text_input(
-              "Número do Contrato (ex: 991/2513 - 450)"
+      st.info(
+          "💡 Selecione uma empresa cadastrada ou crie uma nova para associar"
+          " ao contrato."
+      )
+
+      # Monta lista de empresas existentes
+      existing_cnpjs = (
+          df_company["cnpj"].dropna().unique()
+          if not df_company.empty and "cnpj" in df_company.columns
+          else []
+      )
+      comp_options = ["[ + Cadastrar Nova Empresa ]"] + [
+          f"{cnpj_to_name.get(str(c).strip(), str(c))} ({c})"
+          for c in existing_cnpjs
+      ]
+
+      sel_company_type = st.selectbox(
+          "Empresa Vinculada", options=comp_options, key="sb_comp_type"
+      )
+
+      is_new_company = sel_company_type == "[ + Cadastrar Nova Empresa ]"
+
+      with st.form("f_new_contract"):
+        st.markdown("---")
+        st.subheader("🏢 Dados da Empresa")
+
+        if is_new_company:
+          c_nome = st.text_input(
+              "Nome da Empresa (Razão Social)",
+              placeholder="Ex: Empresa Brasileira de Correios e Telégrafos",
           )
-
-          # Lista empresas cadastradas para associar o CNPJ
-          company_cnpjs = (
-              list(df_company["cnpj"].dropna().unique())
-              if not df_company.empty and "cnpj" in df_company.columns
-              else []
+          c_cnpj = st.text_input(
+              "CNPJ da Empresa", placeholder="Ex: 34.028.316/0021-57"
           )
-          if company_cnpjs:
+        else:
+          # Extrai o CNPJ da opção selecionada "Nome (CNPJ)"
+          extracted_cnpj = (
+              sel_company_type.split("(")[-1].replace(")", "").strip()
+          )
+          extracted_nome = cnpj_to_name.get(extracted_cnpj, extracted_cnpj)
 
-            def fmt_comp(c):
-              return f"{cnpj_to_name.get(str(c).strip(), str(c))} ({c})"
+          st.text_input("Nome da Empresa", value=extracted_nome, disabled=True)
+          st.text_input("CNPJ", value=extracted_cnpj, disabled=True)
+          c_nome = extracted_nome
+          c_cnpj = extracted_cnpj
 
-            new_ctr_cnpj = st.selectbox(
-                "Empresa / CNPJ", options=company_cnpjs, format_func=fmt_comp
-            )
+        st.markdown("---")
+        st.subheader("📄 Dados do Contrato")
+        new_ctr_num = st.text_input(
+            "Número do Contrato", placeholder="Ex: 991/2513 - 450"
+        )
+
+        if st.form_submit_button("💾 Salvar Novo Contrato e Empresa"):
+          if not new_ctr_num or new_ctr_num in contracts_list:
+            st.error("Número de contrato inválido ou já existente.")
+          elif is_new_company and (not c_nome or not c_cnpj):
+            st.error("Preencha o Nome e o CNPJ da empresa para prosseguir.")
           else:
-            new_ctr_cnpj = st.text_input("CNPJ da Empresa")
-
-          if st.form_submit_button("Salvar Novo Contrato"):
-            if new_ctr_num and new_ctr_num not in contracts_list:
-              next_ctr_id = (
-                  int(
-                      pd.to_numeric(
-                          df_contracts["id"], errors="coerce"
-                      ).max()
-                      + 1
-                  )
-                  if not df_contracts.empty
+            # 1. Se for uma nova empresa, insere na aba COMPANY
+            if is_new_company:
+              next_comp_id = (
+                  int(pd.to_numeric(df_company["id"], errors="coerce").max() + 1)
+                  if not df_company.empty and "id" in df_company.columns
                   else 1
               )
-              ws_contracts.append_row([
-                  next_ctr_id,
-                  new_ctr_num,
-                  new_ctr_cnpj,
-              ])
-              st.success(
-                  f"Contrato **{new_ctr_num}** cadastrado com sucesso!"
-              )
-              refresh_caches()
-              st.rerun()
-            else:
-              st.error("Número de contrato inválido ou já existente.")
-      st.stop()  # Interrompe para obrigar a conclusão da criação do contrato
+              ws_company.append_row([next_comp_id, c_nome, c_cnpj])
+
+            # 2. Insere o novo contrato na aba CONTRACT
+            next_ctr_id = (
+                int(
+                    pd.to_numeric(
+                        df_contracts["id"], errors="coerce"
+                    ).max()
+                    + 1
+                )
+                if not df_contracts.empty and "id" in df_contracts.columns
+                else 1
+            )
+            ws_contracts.append_row([
+                next_ctr_id,
+                new_ctr_num,
+                c_cnpj,
+            ])
+
+            st.success(
+                f"Contrato **{new_ctr_num}** cadastrado com sucesso para a"
+                f" empresa **{c_nome}**!"
+            )
+            refresh_caches()
+            st.rerun()
+      st.stop()
     else:
       selected_contract = selected_contract_opt
       match_cnpj = df_contracts[
@@ -225,7 +270,6 @@ def render_crud():
     )
 
     if selected_sub_opt == "[ + Criar Novo Sub-Empenho ]":
-      # Lógica de sugestão de ID para Sub-Empenho (Ex: Se EG=1 -> 101, 102... Se EG=2 -> 201...)
       if not df_sub_eg.empty:
         suggested_sub_id = (
             int(pd.to_numeric(df_sub_eg["id"], errors="coerce").max() + 1)
@@ -356,7 +400,13 @@ def render_crud():
     st.subheader("📋 Visualização Geral do Banco de Dados")
     sel_view = st.radio(
         "Selecione a Tabela",
-        ["Pagamentos", "Sub-Empenhos", "Empenhos Globais", "Contratos"],
+        [
+            "Pagamentos",
+            "Sub-Empenhos",
+            "Empenhos Globais",
+            "Contratos",
+            "Empresas",
+        ],
         horizontal=True,
     )
 
@@ -368,6 +418,8 @@ def render_crud():
       st.dataframe(df_eg, use_container_width=True)
     elif sel_view == "Contratos":
       st.dataframe(df_contracts, use_container_width=True)
+    elif sel_view == "Empresas":
+      st.dataframe(df_company, use_container_width=True)
 
   # =========================================================================
   # TAB 3: ATUALIZAR STATUS DO PAGAMENTO
