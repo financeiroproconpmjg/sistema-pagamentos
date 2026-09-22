@@ -101,10 +101,10 @@ def render_crud():
                 with st.form("f_new_company"):
                     c_nome = st.text_input(
                         "Nome da Empresa (Razão Social)",
-                        placeholder="Ex: Toppus Serviços Terceirizados Eireli",
+                        placeholder="Ex: Empresa Brasileira de Correios e Telégrafos",
                     )
                     c_cnpj = st.text_input(
-                        "CNPJ da Empresa", placeholder="Ex: 09.281.162/0001-10"
+                        "CNPJ da Empresa", placeholder="Ex: 34.028.316/0021-57"
                     )
 
                     if st.form_submit_button("💾 Salvar Nova Empresa"):
@@ -162,7 +162,7 @@ def render_crud():
                     col_c1, col_c2 = st.columns(2)
                     with col_c1:
                         new_ctr_num = st.text_input(
-                            "Número do Contrato", placeholder="Ex: 016/2023 - SME"
+                            "Número do Contrato", placeholder="Ex: 991/2513 - 442"
                         )
                         manager_name = st.text_input(
                             "Nome do Gestor / Fiscal", placeholder="Ex: Gabriel Marques"
@@ -232,7 +232,7 @@ def render_crud():
                 eg_id_val = str(eg_row.get("id", "")).strip()
                 eg_num_val = str(eg_row.get("number", eg_id_val)).strip()
                 eg_val_num = clean_num_val(eg_row.get("value", 0.0))
-                label = f"Empenho Nº {eg_num_val} (ID: {eg_id_val}) - R$ {eg_val_num:,.2f}"
+                label = f"Empenho Nº {eg_num_val} (ID #{eg_id_val}) - R$ {eg_val_num:,.2f}"
                 eg_options_map[label] = eg_id_val
 
         opt_eg = ["[ + Criar Novo Empenho Global ]"] + list(eg_options_map.keys())
@@ -316,19 +316,26 @@ def render_crud():
             if not df_sub.empty and "empenho_global_id" in df_sub.columns
             else pd.DataFrame()
         )
-        sub_list = (
-            df_sub_eg["id"].astype(str).tolist() if not df_sub_eg.empty else []
-        )
-        opt_sub = ["[ + Criar Novo Sub-Empenho ]"] + sub_list
 
-        selected_sub_opt = st.selectbox(
+        sub_options_map = {}
+        if not df_sub_eg.empty:
+            for _, sub_row in df_sub_eg.iterrows():
+                sub_id_val = str(sub_row.get("id", "")).strip()
+                sub_ref_val = str(sub_row.get("reference_month", "---")).strip()
+                sub_val_num = clean_num_val(sub_row.get("value", 0.0))
+                label = f"Sub-Empenho #{sub_id_val} (Ref: {sub_ref_val}) - R$ {sub_val_num:,.2f}"
+                sub_options_map[label] = sub_id_val
+
+        opt_sub = ["[ + Criar Novo Sub-Empenho ]"] + list(sub_options_map.keys())
+
+        selected_sub_label = st.selectbox(
             "Selecione o Sub-Empenho ou Crie um Novo", options=opt_sub, key="sb_sub"
         )
 
-        if selected_sub_opt == "[ + Criar Novo Sub-Empenho ]":
-            if not df_sub_eg.empty:
+        if selected_sub_label == "[ + Criar Novo Sub-Empenho ]":
+            if not df_sub.empty and "id" in df_sub.columns:
                 suggested_sub_id = (
-                    int(pd.to_numeric(df_sub_eg["id"], errors="coerce").max() + 1)
+                    int(pd.to_numeric(df_sub["id"], errors="coerce").max() + 1)
                 )
             else:
                 try:
@@ -340,16 +347,16 @@ def render_crud():
             with st.expander("📝 Formulário: Novo Sub-Empenho", expanded=True):
                 with st.form("f_new_sub"):
                     new_sub_id = st.number_input(
-                        "ID do Sub-Empenho (editável se desejar pular número)",
+                        "ID do Sub-Empenho (Gerado / Editável)",
                         value=suggested_sub_id,
                         step=1,
                     )
-                    sub_ref_m = st.text_input("Mês de Referência (MM/YYYY)", "03/2026")
+                    sub_ref_m = st.text_input("Mês de Referência (MM/YYYY)", "01/2026")
                     sub_val = st.number_input(
                         "Valor Sub-Empenhado (R$)", value=0.0, step=500.0
                     )
 
-                    if st.form_submit_button("Salvar Novo Sub-Empenho"):
+                    if st.form_submit_button("💾 Salvar Novo Sub-Empenho"):
                         existing_sub_ids = (
                             df_sub["id"].astype(str).tolist()
                             if not df_sub.empty and "id" in df_sub.columns
@@ -359,21 +366,24 @@ def render_crud():
                             st.error(
                                 f"O ID de Sub-Empenho #{new_sub_id} já existe! Escolha outro número."
                             )
+                        elif not sub_ref_m:
+                            st.error("Informe o mês de referência (MM/YYYY).")
                         else:
+                            # Gravação na aba SUB_EMPENHO (id, empenho_global_id, reference_month, value)
                             ws_sub.append_row([
                                 new_sub_id,
                                 selected_eg_id,
-                                sub_ref_m,
+                                sub_ref_m.strip(),
                                 sub_val,
                             ])
                             st.success(
-                                f"Sub-Empenho **#{new_sub_id}** salvo com sucesso!"
+                                f"Sub-Empenho **#{new_sub_id}** salvo com sucesso para o mês {sub_ref_m}!"
                             )
                             refresh_caches()
                             st.rerun()
             st.stop()
         else:
-            selected_sub_id = selected_sub_opt
+            selected_sub_id = sub_options_map[selected_sub_label]
             sub_info = df_sub_eg[
                 df_sub_eg["id"].astype(str) == selected_sub_id
             ].iloc[0]
@@ -394,7 +404,7 @@ def render_crud():
             else 1001
         )
 
-        ref_m_default = str(sub_info.get("reference_month", "03/2026"))
+        ref_m_default = str(sub_info.get("reference_month", "01/2026"))
         val_default = clean_num_val(sub_info.get("value", 0.0))
 
         with st.form("f_create_payment"):
@@ -414,13 +424,14 @@ def render_crud():
                 today_str = datetime.date.today().strftime("%d/%m/%Y")
                 now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
+                # Gravação na aba PAGAMENTOS (id, sub_empenho_id, company_cnpj, contract_number, reference_month, payment_execution_month, regime_pagamento, paid_amount, payment_date, current_status)
                 ws_payments.append_row([
                     next_pay_id,
                     selected_sub_id,
                     selected_cnpj,
                     selected_contract,
-                    ref_m,
-                    p_exec_m,
+                    ref_m.strip(),
+                    p_exec_m.strip(),
                     regime_p,
                     p_val,
                     today_str if init_st == "PAGO" else "",
@@ -453,13 +464,7 @@ def render_crud():
         st.subheader("📋 Visualização Geral do Banco de Dados")
         sel_view = st.radio(
             "Selecione a Tabela",
-            [
-                "Pagamentos",
-                "Sub-Empenhos",
-                "Empenhos Globais",
-                "Contratos",
-                "Empresas",
-            ],
+            ["Pagamentos", "Sub-Empenhos", "Empenhos Globais", "Contratos", "Empresas"],
             horizontal=True,
         )
 
