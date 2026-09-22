@@ -232,7 +232,7 @@ def render_crud():
                 eg_id_val = str(eg_row.get("id", "")).strip()
                 eg_num_val = str(eg_row.get("number", eg_id_val)).strip()
                 eg_val_num = clean_num_val(eg_row.get("value", 0.0))
-                label = f"Empenho Nº {eg_num_val} (ID #{eg_id_val}) - R$ {eg_val_num:,.2f}"
+                label = f"Empenho Nº {eg_num_val} - R$ {eg_val_num:,.2f}"
                 eg_options_map[label] = eg_id_val
 
         opt_eg = ["[ + Criar Novo Empenho Global ]"] + list(eg_options_map.keys())
@@ -246,16 +246,6 @@ def render_crud():
         if selected_eg_label == "[ + Criar Novo Empenho Global ]":
             with st.expander("📝 Formulário: Novo Empenho Global", expanded=True):
                 with st.form("f_new_eg"):
-                    next_eg_id = (
-                        int(pd.to_numeric(df_eg["id"], errors="coerce").max() + 1)
-                        if not df_eg.empty and "id" in df_eg.columns
-                        else 1
-                    )
-                    st.number_input(
-                        "ID do Empenho Global (Automático)",
-                        value=next_eg_id,
-                        disabled=True,
-                    )
                     eg_number = st.text_input(
                         "Número do Empenho Global (ex: 536)", placeholder="536"
                     )
@@ -281,6 +271,13 @@ def render_crud():
                         if not eg_number:
                             st.error("Informe o número do Empenho Global.")
                         else:
+                            # Cálculo do ID nos bastidores
+                            next_eg_id = (
+                                int(pd.to_numeric(df_eg["id"], errors="coerce").max() + 1)
+                                if not df_eg.empty and "id" in df_eg.columns
+                                else 1
+                            )
+
                             ws_eg.append_row([
                                 next_eg_id,
                                 selected_contract,
@@ -291,7 +288,7 @@ def render_crud():
                                 "FALSO",
                             ])
                             st.success(
-                                f"Empenho Global **Nº {eg_number}** (ID #{next_eg_id}) criado com sucesso!"
+                                f"Empenho Global **Nº {eg_number}** criado com sucesso!"
                             )
                             refresh_caches()
                             st.rerun()
@@ -323,7 +320,7 @@ def render_crud():
                 sub_id_val = str(sub_row.get("id", "")).strip()
                 sub_ref_val = str(sub_row.get("reference_month", "---")).strip()
                 sub_val_num = clean_num_val(sub_row.get("value", 0.0))
-                label = f"Sub-Empenho #{sub_id_val} (Ref: {sub_ref_val}) - R$ {sub_val_num:,.2f}"
+                label = f"Sub-Empenho (Ref: {sub_ref_val}) - R$ {sub_val_num:,.2f}"
                 sub_options_map[label] = sub_id_val
 
         opt_sub = ["[ + Criar Novo Sub-Empenho e Lançar Pagamento ]"] + list(sub_options_map.keys())
@@ -333,33 +330,11 @@ def render_crud():
         )
 
         if selected_sub_label == "[ + Criar Novo Sub-Empenho e Lançar Pagamento ]":
-            if not df_sub.empty and "id" in df_sub.columns:
-                suggested_sub_id = (
-                    int(pd.to_numeric(df_sub["id"], errors="coerce").max() + 1)
-                )
-            else:
-                try:
-                    eg_num = int(selected_eg_id)
-                    suggested_sub_id = eg_num * 100 + 1
-                except ValueError:
-                    suggested_sub_id = 101
-
-            next_pay_id = (
-                int(pd.to_numeric(df_payments["id"], errors="coerce").max() + 1)
-                if not df_payments.empty and "id" in df_payments.columns
-                else 1001
-            )
-
             with st.expander("📝 Formulário: Novo Sub-Empenho & Pagamento", expanded=True):
                 with st.form("f_new_sub_and_payment"):
                     st.markdown("###### 🔹 Dados do Sub-Empenho")
                     col_s1, col_s2 = st.columns(2)
                     with col_s1:
-                        new_sub_id = st.number_input(
-                            "ID do Sub-Empenho (Automático/Editável)",
-                            value=suggested_sub_id,
-                            step=1,
-                        )
                         sub_ref_m = st.text_input("Mês de Referência (MM/YYYY)", "01/2026")
                     with col_s2:
                         sub_val = st.number_input(
@@ -371,9 +346,6 @@ def render_crud():
                     
                     col_p1, col_p2 = st.columns(2)
                     with col_p1:
-                        p_id_display = st.number_input(
-                            "ID do Pagamento (Gerado Automático)", value=next_pay_id, disabled=True
-                        )
                         p_exec_m = st.text_input("Mês de Execução do Pagamento (MM/YYYY)", value="02/2026")
                         regime_p = st.selectbox("Regime de Pagamento", ["Mensal", "Excepcional"], index=0)
 
@@ -384,33 +356,38 @@ def render_crud():
                     obs = st.text_area("Observações do Lançamento / Histórico")
 
                     if st.form_submit_button("💾 Salvar Sub-Empenho e Gerar Pagamento"):
-                        existing_sub_ids = (
-                            df_sub["id"].astype(str).tolist()
-                            if not df_sub.empty and "id" in df_sub.columns
-                            else []
-                        )
-                        if str(new_sub_id) in existing_sub_ids:
-                            st.error(
-                                f"O ID de Sub-Empenho #{new_sub_id} já existe! Escolha outro número."
-                            )
-                        elif not sub_ref_m:
+                        if not sub_ref_m:
                             st.error("Informe o mês de referência (MM/YYYY).")
                         else:
+                            # 1. Cálculo automático do ID do Sub-Empenho nos bastidores
+                            next_sub_id = (
+                                int(pd.to_numeric(df_sub["id"], errors="coerce").max() + 1)
+                                if not df_sub.empty and "id" in df_sub.columns
+                                else 101
+                            )
+
+                            # 2. Cálculo automático do ID do Pagamento nos bastidores
+                            next_pay_id = (
+                                int(pd.to_numeric(df_payments["id"], errors="coerce").max() + 1)
+                                if not df_payments.empty and "id" in df_payments.columns
+                                else 1001
+                            )
+
                             today_str = datetime.date.today().strftime("%d/%m/%Y")
                             now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-                            # 1. Grava na aba SUB_EMPENHO (id, empenho_global_id, reference_month, value)[cite: 13]
+                            # Gravação na aba SUB_EMPENHO (id, empenho_global_id, reference_month, value)
                             ws_sub.append_row([
-                                new_sub_id,
+                                next_sub_id,
                                 selected_eg_id,
                                 sub_ref_m.strip(),
                                 sub_val,
                             ])
 
-                            # 2. Grava na aba PAGAMENTOS (id, sub_empenho_id, company_cnpj, contract_number, reference_month, payment_execution_month, regime_pagamento, paid_amount, payment_date, current_status)[cite: 14]
+                            # Gravação na aba PAGAMENTOS (id, sub_empenho_id, company_cnpj, contract_number, reference_month, payment_execution_month, regime_pagamento, paid_amount, payment_date, current_status)
                             ws_payments.append_row([
                                 next_pay_id,
-                                new_sub_id,
+                                next_sub_id,
                                 selected_cnpj,
                                 selected_contract,
                                 sub_ref_m.strip(),
@@ -421,13 +398,13 @@ def render_crud():
                                 init_st,
                             ])
 
-                            # 3. Grava na aba HISTORICO_STATUS (Auditoria)
+                            # Gravação na aba HISTORICO_STATUS (Auditoria)
                             ws_history.append_row([
                                 len(ws_history.get_all_values()) + 1,
                                 next_pay_id,
                                 selected_contract,
                                 "N/A",
-                                new_sub_id,
+                                next_sub_id,
                                 "NOVO_REGISTRO",
                                 init_st,
                                 now_str,
@@ -436,7 +413,7 @@ def render_crud():
                             ])
 
                             st.success(
-                                f"✅ Sub-Empenho **#{new_sub_id}** e Pagamento **#{next_pay_id}** cadastrados com sucesso!"
+                                f"✅ Sub-Empenho do mês **{sub_ref_m}** e Pagamento salvos com sucesso na planilha!"
                             )
                             refresh_caches()
                             st.rerun()
@@ -447,7 +424,7 @@ def render_crud():
                 df_sub_eg["id"].astype(str) == selected_sub_id
             ].iloc[0]
             st.info(
-                f"📅 **Sub-Empenho #{selected_sub_id}** | Mês de Ref: {sub_info.get('reference_month', '')} | Valor: R$ {clean_num_val(sub_info.get('value', 0)):,.2f}"
+                f"📅 **Mês de Ref:** {sub_info.get('reference_month', '')} | **Valor:** R$ {clean_num_val(sub_info.get('value', 0)):,.2f}"
             )
 
     # =========================================================================
