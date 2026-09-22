@@ -70,7 +70,7 @@ def render_crud():
     ])
 
     # =========================================================================
-    # TAB 1: NOVO LANÇAMENTO EM ETAPAS (EMPRESA -> CONTRATO -> GLOBAL -> SUB -> PAGAMENTO)
+    # TAB 1: NOVO LANÇAMENTO EM ETAPAS (EMPRESA -> CONTRATO -> GLOBAL -> SUB + PAGAMENTO)
     # =========================================================================
     with t_create:
         st.subheader("🔁 Cadastro Encadeado por Etapas")
@@ -168,7 +168,7 @@ def render_crud():
                             "Nome do Gestor / Fiscal", placeholder="Ex: Gabriel Marques"
                         )
                         regime_pag = st.selectbox(
-                            "Regime de Pagamento", ["Mensal", "Excepcional"], index=0
+                            "Regime de Pagamento Padronizado", ["Mensal", "Excepcional"], index=0
                         )
 
                     with col_c2:
@@ -308,9 +308,9 @@ def render_crud():
         st.markdown("---")
 
         # -------------------------------------------------------------------------
-        # ETAPA 4: SELEÇÃO OU CRIAÇÃO DO SUB-EMPENHO
+        # ETAPA 4: CRIAÇÃO / SELEÇÃO DO SUB-EMPENHO E LANÇAMENTO DO PAGAMENTO
         # -------------------------------------------------------------------------
-        st.markdown("##### 4️⃣ Sub-Empenho")
+        st.markdown("##### 4️⃣ Sub-Empenho e Lançamento do Pagamento")
         df_sub_eg = (
             df_sub[df_sub["empenho_global_id"].astype(str) == str(selected_eg_id)]
             if not df_sub.empty and "empenho_global_id" in df_sub.columns
@@ -326,13 +326,13 @@ def render_crud():
                 label = f"Sub-Empenho #{sub_id_val} (Ref: {sub_ref_val}) - R$ {sub_val_num:,.2f}"
                 sub_options_map[label] = sub_id_val
 
-        opt_sub = ["[ + Criar Novo Sub-Empenho ]"] + list(sub_options_map.keys())
+        opt_sub = ["[ + Criar Novo Sub-Empenho e Lançar Pagamento ]"] + list(sub_options_map.keys())
 
         selected_sub_label = st.selectbox(
-            "Selecione o Sub-Empenho ou Crie um Novo", options=opt_sub, key="sb_sub"
+            "Selecione um Sub-Empenho Existente ou Crie um Novo", options=opt_sub, key="sb_sub"
         )
 
-        if selected_sub_label == "[ + Criar Novo Sub-Empenho ]":
+        if selected_sub_label == "[ + Criar Novo Sub-Empenho e Lançar Pagamento ]":
             if not df_sub.empty and "id" in df_sub.columns:
                 suggested_sub_id = (
                     int(pd.to_numeric(df_sub["id"], errors="coerce").max() + 1)
@@ -344,19 +344,46 @@ def render_crud():
                 except ValueError:
                     suggested_sub_id = 101
 
-            with st.expander("📝 Formulário: Novo Sub-Empenho", expanded=True):
-                with st.form("f_new_sub"):
-                    new_sub_id = st.number_input(
-                        "ID do Sub-Empenho (Gerado / Editável)",
-                        value=suggested_sub_id,
-                        step=1,
-                    )
-                    sub_ref_m = st.text_input("Mês de Referência (MM/YYYY)", "01/2026")
-                    sub_val = st.number_input(
-                        "Valor Sub-Empenhado (R$)", value=0.0, step=500.0
-                    )
+            next_pay_id = (
+                int(pd.to_numeric(df_payments["id"], errors="coerce").max() + 1)
+                if not df_payments.empty and "id" in df_payments.columns
+                else 1001
+            )
 
-                    if st.form_submit_button("💾 Salvar Novo Sub-Empenho"):
+            with st.expander("📝 Formulário: Novo Sub-Empenho & Pagamento", expanded=True):
+                with st.form("f_new_sub_and_payment"):
+                    st.markdown("###### 🔹 Dados do Sub-Empenho")
+                    col_s1, col_s2 = st.columns(2)
+                    with col_s1:
+                        new_sub_id = st.number_input(
+                            "ID do Sub-Empenho (Automático/Editável)",
+                            value=suggested_sub_id,
+                            step=1,
+                        )
+                        sub_ref_m = st.text_input("Mês de Referência (MM/YYYY)", "01/2026")
+                    with col_s2:
+                        sub_val = st.number_input(
+                            "Valor do Sub-Empenho (R$)", value=0.0, step=500.0
+                        )
+
+                    st.markdown("---")
+                    st.markdown("###### 🔹 Dados do Lançamento do Pagamento")
+                    
+                    col_p1, col_p2 = st.columns(2)
+                    with col_p1:
+                        p_id_display = st.number_input(
+                            "ID do Pagamento (Gerado Automático)", value=next_pay_id, disabled=True
+                        )
+                        p_exec_m = st.text_input("Mês de Execução do Pagamento (MM/YYYY)", value="02/2026")
+                        regime_p = st.selectbox("Regime de Pagamento", ["Mensal", "Excepcional"], index=0)
+
+                    with col_p2:
+                        p_val = st.number_input("Valor Efetivo do Pagamento (R$)", value=sub_val, step=500.0)
+                        init_st = st.selectbox("Status Inicial do Pagamento", STATUS_OPTIONS, index=0)
+
+                    obs = st.text_area("Observações do Lançamento / Histórico")
+
+                    if st.form_submit_button("💾 Salvar Sub-Empenho e Gerar Pagamento"):
                         existing_sub_ids = (
                             df_sub["id"].astype(str).tolist()
                             if not df_sub.empty and "id" in df_sub.columns
@@ -369,15 +396,47 @@ def render_crud():
                         elif not sub_ref_m:
                             st.error("Informe o mês de referência (MM/YYYY).")
                         else:
-                            # Gravação na aba SUB_EMPENHO (id, empenho_global_id, reference_month, value)
+                            today_str = datetime.date.today().strftime("%d/%m/%Y")
+                            now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+                            # 1. Grava na aba SUB_EMPENHO (id, empenho_global_id, reference_month, value)[cite: 13]
                             ws_sub.append_row([
                                 new_sub_id,
                                 selected_eg_id,
                                 sub_ref_m.strip(),
                                 sub_val,
                             ])
+
+                            # 2. Grava na aba PAGAMENTOS (id, sub_empenho_id, company_cnpj, contract_number, reference_month, payment_execution_month, regime_pagamento, paid_amount, payment_date, current_status)[cite: 14]
+                            ws_payments.append_row([
+                                next_pay_id,
+                                new_sub_id,
+                                selected_cnpj,
+                                selected_contract,
+                                sub_ref_m.strip(),
+                                p_exec_m.strip(),
+                                regime_p,
+                                p_val if init_st == "PAGO" else 0,
+                                today_str if init_st == "PAGO" else "",
+                                init_st,
+                            ])
+
+                            # 3. Grava na aba HISTORICO_STATUS (Auditoria)
+                            ws_history.append_row([
+                                len(ws_history.get_all_values()) + 1,
+                                next_pay_id,
+                                selected_contract,
+                                "N/A",
+                                new_sub_id,
+                                "NOVO_REGISTRO",
+                                init_st,
+                                now_str,
+                                st.session_state.user,
+                                f"Criação Unificada: {obs}",
+                            ])
+
                             st.success(
-                                f"Sub-Empenho **#{new_sub_id}** salvo com sucesso para o mês {sub_ref_m}!"
+                                f"✅ Sub-Empenho **#{new_sub_id}** e Pagamento **#{next_pay_id}** cadastrados com sucesso!"
                             )
                             refresh_caches()
                             st.rerun()
@@ -387,75 +446,9 @@ def render_crud():
             sub_info = df_sub_eg[
                 df_sub_eg["id"].astype(str) == selected_sub_id
             ].iloc[0]
-            st.caption(
-                f"📅 **Mês de Ref:** {sub_info.get('reference_month', '')} | **Valor:** R$ {clean_num_val(sub_info.get('value', 0)):,.2f}"
+            st.info(
+                f"📅 **Sub-Empenho #{selected_sub_id}** | Mês de Ref: {sub_info.get('reference_month', '')} | Valor: R$ {clean_num_val(sub_info.get('value', 0)):,.2f}"
             )
-
-        st.markdown("---")
-
-        # -------------------------------------------------------------------------
-        # ETAPA 5: LANÇAMENTO FINAL DO PAGAMENTO
-        # -------------------------------------------------------------------------
-        st.markdown("##### 5️⃣ Lançamento do Pagamento")
-
-        next_pay_id = (
-            int(pd.to_numeric(df_payments["id"], errors="coerce").max() + 1)
-            if not df_payments.empty and "id" in df_payments.columns
-            else 1001
-        )
-
-        ref_m_default = str(sub_info.get("reference_month", "01/2026"))
-        val_default = clean_num_val(sub_info.get("value", 0.0))
-
-        with st.form("f_create_payment"):
-            st.number_input(
-                "ID do Pagamento (Gerado Automático)", value=next_pay_id, disabled=True
-            )
-            ref_m = st.text_input("Mês de Referência", value=ref_m_default)
-            p_exec_m = st.text_input("Mês de Execução do Pagamento", value=ref_m_default)
-            regime_p = st.selectbox("Regime de Pagamento", ["Mensal", "Excepcional"])
-            p_val = st.number_input(
-                "Valor do Pagamento (R$)", value=val_default, step=100.0
-            )
-            init_st = st.selectbox("Status Inicial", STATUS_OPTIONS)
-            obs = st.text_area("Observação / Histórico")
-
-            if st.form_submit_button("💾 Finalizar Lançamento do Pagamento"):
-                today_str = datetime.date.today().strftime("%d/%m/%Y")
-                now_str = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-
-                # Gravação na aba PAGAMENTOS (id, sub_empenho_id, company_cnpj, contract_number, reference_month, payment_execution_month, regime_pagamento, paid_amount, payment_date, current_status)
-                ws_payments.append_row([
-                    next_pay_id,
-                    selected_sub_id,
-                    selected_cnpj,
-                    selected_contract,
-                    ref_m.strip(),
-                    p_exec_m.strip(),
-                    regime_p,
-                    p_val,
-                    today_str if init_st == "PAGO" else "",
-                    init_st,
-                ])
-
-                ws_history.append_row([
-                    len(ws_history.get_all_values()) + 1,
-                    next_pay_id,
-                    selected_contract,
-                    "N/A",
-                    selected_sub_id,
-                    "NOVO_REGISTRO",
-                    init_st,
-                    now_str,
-                    st.session_state.user,
-                    f"Criação: {obs}",
-                ])
-
-                st.success(
-                    f"✅ Pagamento **#{next_pay_id}** registrado com sucesso para o mês {ref_m}!"
-                )
-                refresh_caches()
-                st.rerun()
 
     # =========================================================================
     # TAB 2: LISTAR TABELAS
