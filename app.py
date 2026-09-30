@@ -1,8 +1,8 @@
-# app.py
 import streamlit as st
 from streamlit_option_menu import option_menu
+
 from views.audit import render_audit
-from views.crud import render_crud
+from views.crud.main import render_crud
 from views.dashboard import render_dashboard
 
 st.set_page_config(

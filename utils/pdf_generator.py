@@ -1,21 +1,26 @@
-# pdf_generator.py
+# utils/pdf_generator.py
 import io
+
 import matplotlib
 import matplotlib.pyplot as plt
-from fpdf import FPDF
-import pandas as pd
 
 # Configura backend headless do Matplotlib
 matplotlib.use("Agg")
+import pandas as pd
+from fpdf import FPDF
 
 
 def format_brl(val):
     """Formata número no padrão monetário brasileiro R$ X.XXX,XX."""
-    return f"R$ {val:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
+    try:
+        v = float(val)
+    except (ValueError, TypeError):
+        v = 0.0
+    return f"R$ {v:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
 
 
 def clean_pdf_text(text):
-    """Remove caracteres Unicode incompatíveis com Helvetica."""
+    """Remove caracteres Unicode incompatíveis com a fonte padrão Helvetica."""
     if text is None:
         return ""
     s = (
@@ -29,7 +34,7 @@ def clean_pdf_text(text):
 
 
 def generate_line_chart_img(chart_data):
-    """Gera imagem do gráfico de linha para o PDF."""
+    """Gera imagem do gráfico de linha para inserção no PDF."""
     fig, ax = plt.subplots(figsize=(7.5, 3.2))
     for col in chart_data.columns:
         if col != "Mês":
@@ -57,8 +62,10 @@ def generate_line_chart_img(chart_data):
     return img_buf
 
 
-def generate_pdf_report(empresas_str, df_payments_sub, df_contracts_sub, ano_sel, chart_data):
-    """Gera o documento PDF formatado com gráficos e tabelas em memória."""
+def generate_pdf_report(
+    empresas_str, df_payments_sub, df_contracts_sub, ano_sel, chart_data
+):
+    """Gera o documento PDF formatado em memória."""
     pdf = FPDF()
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -74,24 +81,23 @@ def generate_pdf_report(empresas_str, df_payments_sub, df_contracts_sub, ano_sel
     )
 
     pdf.set_font("Helvetica", "", 10)
-    pdf.cell(
-        0, 6, clean_pdf_text(f"Empresa(s): {empresas_str}"), ln=True, align="C"
-    )
+    pdf.cell(0, 6, clean_pdf_text(f"Empresa(s): {empresas_str}"), ln=True, align="C")
     pdf.ln(4)
 
     # --- RESUMO FINANCEIRO (KPIS) ---
-    pago_mask = (
-        (df_payments_sub["current_status"] == "PAGO")
-        if not df_payments_sub.empty
-        else pd.Series()
+    if not df_payments_sub.empty and "current_status" in df_payments_sub.columns:
+        pago_mask = df_payments_sub["current_status"] == "PAGO"
+        df_pago = df_payments_sub[pago_mask]
+    else:
+        df_pago = pd.DataFrame()
+
+    tot_pago = (
+        df_pago["paid_num"].sum()
+        if not df_pago.empty and "paid_num" in df_pago.columns
+        else 0.0
     )
-    df_pago = (
-        df_payments_sub[pago_mask]
-        if not df_payments_sub.empty
-        else pd.DataFrame()
-    )
-    tot_pago = df_pago["paid_num"].sum() if not df_pago.empty else 0.0
     tot_lanctos = len(df_payments_sub) if not df_payments_sub.empty else 0
+    tot_ctrs = len(df_contracts_sub) if not df_contracts_sub.empty else 0
 
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, clean_pdf_text("1. Resumo Orçamentário"), ln=True)
@@ -100,9 +106,7 @@ def generate_pdf_report(empresas_str, df_payments_sub, df_contracts_sub, ano_sel
     pdf.cell(
         0,
         6,
-        clean_pdf_text(
-            f"- Total de Contratos Monitorados: {len(df_contracts_sub)}"
-        ),
+        clean_pdf_text(f"- Total de Contratos Monitorados: {tot_ctrs}"),
         ln=True,
     )
     pdf.cell(
@@ -142,9 +146,7 @@ def generate_pdf_report(empresas_str, df_payments_sub, df_contracts_sub, ano_sel
     pdf.cell(25, 7, clean_pdf_text("Mês Ref."), border=1, align="C")
     pdf.cell(35, 7, clean_pdf_text("Valor (R$)"), border=1, align="C")
     pdf.cell(30, 7, clean_pdf_text("Data Pgto"), border=1, align="C")
-    pdf.cell(
-        65, 7, clean_pdf_text("Status Atual"), border=1, align="C", ln=True
-    )
+    pdf.cell(65, 7, clean_pdf_text("Status Atual"), border=1, align="C", ln=True)
 
     pdf.set_font("Helvetica", "", 8)
     if not df_payments_sub.empty:

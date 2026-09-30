@@ -1,8 +1,13 @@
-# views/dashboard.py
 import pandas as pd
 import streamlit as st
-from database import load_table
-from pdf_generator import format_brl, generate_pdf_report
+
+from services import (
+    company_service,
+    contract_service,
+    empenho_service,
+    payment_service,
+)
+from utils.pdf_generator import format_brl, generate_pdf_report
 
 
 def clean_num(series):
@@ -21,40 +26,12 @@ def clean_num(series):
 
 
 def render_dashboard():
-    # Carregamento das Tabelas
-    df_contracts, _ = load_table("CONTRACT")
-    df_payments, _ = load_table("PAGAMENTOS")
-    df_sub, _ = load_table("SUB_EMPENHO")
-    df_eg, _ = load_table("EMPENHO_GLOBAL")
-    df_company, _ = load_table("COMPANY")
-
-    # Mapeamento CNPJ -> Nome da Empresa
-    cnpj_to_name = {}
-    if not df_company.empty:
-        cnpj_col = next(
-            (c for c in ["cnpj", "company_cnpj"] if c in df_company.columns),
-            None,
-        )
-        name_col = next(
-            (
-                c
-                for c in [
-                    "company_name",
-                    "razao_social",
-                    "nome",
-                    "name",
-                    "company",
-                ]
-                if c in df_company.columns
-            ),
-            None,
-        )
-        if cnpj_col and name_col:
-            for _, r in df_company.iterrows():
-                c_val = str(r[cnpj_col]).strip()
-                n_val = str(r[name_col]).strip()
-                if c_val and n_val:
-                    cnpj_to_name[c_val] = n_val
+    # 1. Carregamento centralizado via Camada de Serviços (Service Pattern)
+    _df_company, _, cnpj_to_name = company_service.get_companies()
+    df_contracts, _, _ = contract_service.get_contracts_by_company("")
+    df_eg, _, _ = empenho_service.get_empenhos_by_contract("")
+    df_sub, _, _ = payment_service.get_sub_empenhos("")
+    df_payments, _ = payment_service.get_payments()
 
     # --- FILTROS DE TOPO ---
     c_ano, c_emp = st.columns(2)
@@ -62,7 +39,7 @@ def render_dashboard():
 
     options_emp = (
         list(df_contracts["company_cnpj"].dropna().unique())
-        if not df_contracts.empty
+        if not df_contracts.empty and "company_cnpj" in df_contracts.columns
         else []
     )
 
@@ -78,13 +55,9 @@ def render_dashboard():
     )
 
     # Cascata de Filtros
-    if emp_selected:
-        df_contracts_sub = df_contracts[
-            df_contracts["company_cnpj"].isin(emp_selected)
-        ]
-        nomes_sel = [
-            cnpj_to_name.get(str(c).strip(), str(c)) for c in emp_selected
-        ]
+    if emp_selected and "company_cnpj" in df_contracts.columns:
+        df_contracts_sub = df_contracts[df_contracts["company_cnpj"].isin(emp_selected)]
+        nomes_sel = [cnpj_to_name.get(str(c).strip(), str(c)) for c in emp_selected]
         empresas_header_str = ", ".join(nomes_sel)
     else:
         df_contracts_sub = df_contracts.copy()
@@ -92,31 +65,33 @@ def render_dashboard():
 
     active_contracts = (
         df_contracts_sub["contract_number"].tolist()
-        if not df_contracts_sub.empty
+        if not df_contracts_sub.empty and "contract_number" in df_contracts_sub.columns
         else []
     )
 
-    if not df_payments.empty:
+    if not df_payments.empty and "contract_number" in df_payments.columns:
         df_payments_sub = df_payments[
             df_payments["contract_number"].isin(active_contracts)
         ].copy()
-        df_payments_sub["paid_num"] = clean_num(df_payments_sub["paid_amount"])
+        df_payments_sub["paid_num"] = clean_num(df_payments_sub.get("paid_amount"))
     else:
         df_payments_sub = pd.DataFrame()
 
-    if not df_eg.empty:
-        df_eg_sub = df_eg[df_eg["contract_number"].isin(active_contracts)]
-        df_eg_sub["val_num"] = clean_num(df_eg_sub["value"])
+    if not df_eg.empty and "contract_number" in df_eg.columns:
+        df_eg_sub = df_eg[df_eg["contract_number"].isin(active_contracts)].copy()
+        df_eg_sub["val_num"] = clean_num(df_eg_sub.get("value"))
     else:
         df_eg_sub = pd.DataFrame()
 
-    if not df_sub.empty and not df_eg_sub.empty:
+    if (
+        not df_sub.empty
+        and not df_eg_sub.empty
+        and "empenho_global_id" in df_sub.columns
+    ):
         df_sub_sub = df_sub[
-            df_sub["empenho_global_id"]
-            .astype(str)
-            .isin(df_eg_sub["id"].astype(str))
-        ]
-        df_sub_sub["val_num"] = clean_num(df_sub_sub["value"])
+            df_sub["empenho_global_id"].astype(str).isin(df_eg_sub["id"].astype(str))
+        ].copy()
+        df_sub_sub["val_num"] = clean_num(df_sub_sub.get("value"))
     else:
         df_sub_sub = pd.DataFrame()
 
@@ -138,17 +113,28 @@ def render_dashboard():
     ]
     chart_data = pd.DataFrame({"Mês": meses_names})
 
-    if not df_payments_sub.empty and not df_contracts_sub.empty:
+    if (
+        not df_payments_sub.empty
+        and not df_contracts_sub.empty
+        and "current_status" in df_payments_sub.columns
+    ):
         pago_mask = df_payments_sub["current_status"] == "PAGO"
         df_pago_ano = df_payments_sub[pago_mask].copy()
-        df_pago_ano["ref_m_clean"] = (
-            df_pago_ano["reference_month"]
-            .astype(str)
-            .str.strip()
-            .str.replace("-", "/", regex=False)
-        )
+        if "reference_month" in df_pago_ano.columns:
+            df_pago_ano["ref_m_clean"] = (
+                df_pago_ano["reference_month"]
+                .astype(str)
+                .str.strip()
+                .str.replace("-", "/", regex=False)
+            )
+        else:
+            df_pago_ano["ref_m_clean"] = ""
 
-        empresas_ativas = df_contracts_sub["company_cnpj"].dropna().unique()
+        empresas_ativas = (
+            df_contracts_sub["company_cnpj"].dropna().unique()
+            if "company_cnpj" in df_contracts_sub.columns
+            else []
+        )
         company_cols = []
 
         for emp in empresas_ativas:
@@ -156,8 +142,7 @@ def render_dashboard():
             emp_name = cnpj_to_name.get(emp_clean, emp_clean)
 
             ctrs_emp = df_contracts_sub[
-                df_contracts_sub["company_cnpj"].astype(str).str.strip()
-                == emp_clean
+                df_contracts_sub["company_cnpj"].astype(str).str.strip() == emp_clean
             ]["contract_number"].tolist()
             vals_mes = []
 
@@ -167,11 +152,7 @@ def render_dashboard():
 
                 v = df_pago_ano[
                     (df_pago_ano["contract_number"].isin(ctrs_emp))
-                    & (
-                        df_pago_ano["ref_m_clean"].isin(
-                            [m_code, m_code_no_zero]
-                        )
-                    )
+                    & (df_pago_ano["ref_m_clean"].isin([m_code, m_code_no_zero]))
                 ]["paid_num"].sum()
                 vals_mes.append(v)
 
@@ -195,7 +176,7 @@ def render_dashboard():
         st.title("📊 Painel Geral de Contratos e Pagamentos")
 
     with btn_col:
-        st.write("")  # Espaçamento vertical
+        st.write("")
         pdf_bytes = generate_pdf_report(
             empresas_header_str,
             df_payments_sub,
@@ -213,22 +194,24 @@ def render_dashboard():
         )
 
     # --- KPIS PRINCIPAIS ---
-    if not df_payments_sub.empty:
+    if not df_payments_sub.empty and "current_status" in df_payments_sub.columns:
         pago_mask = df_payments_sub["current_status"] == "PAGO"
         df_pago = df_payments_sub[pago_mask]
         total_pago = df_pago["paid_num"].sum() if not df_pago.empty else 0.0
         qtd_meses_pagos = (
-            df_pago["reference_month"].nunique() if not df_pago.empty else 0
+            df_pago["reference_month"].nunique()
+            if not df_pago.empty and "reference_month" in df_pago.columns
+            else 0
         )
-        media_mensal = (
-            (total_pago / qtd_meses_pagos) if qtd_meses_pagos > 0 else 0.0
-        )
+        media_mensal = (total_pago / qtd_meses_pagos) if qtd_meses_pagos > 0 else 0.0
         pendencias_count = len(df_payments_sub[~pago_mask])
     else:
         total_pago, media_mensal, pendencias_count = 0.0, 0.0, 0
 
     total_sub_empenhado = (
-        df_sub_sub["val_num"].sum() if not df_sub_sub.empty else 0.0
+        df_sub_sub["val_num"].sum()
+        if not df_sub_sub.empty and "val_num" in df_sub_sub.columns
+        else 0.0
     )
 
     k1, k2, k3, k4 = st.columns(4)
@@ -241,24 +224,35 @@ def render_dashboard():
 
     # --- ANÁLISE DETALHADA DE EMPENHO POR CONTRATO ---
     st.subheader("🎯 Execução Orçamentária por Contrato")
-    if not df_contracts_sub.empty:
+    if not df_contracts_sub.empty and "contract_number" in df_contracts_sub.columns:
         ctr_list = df_contracts_sub["contract_number"].tolist()
-        selected_ctr = st.selectbox(
-            "Selecione um Contrato para Detalhamento", ctr_list
-        )
+        selected_ctr = st.selectbox("Selecione um Contrato para Detalhamento", ctr_list)
 
         eg_match = (
             df_eg_sub[df_eg_sub["contract_number"] == selected_ctr]
-            if not df_eg_sub.empty
+            if not df_eg_sub.empty and "contract_number" in df_eg_sub.columns
             else pd.DataFrame()
         )
-        val_eg = eg_match["val_num"].sum() if not eg_match.empty else 0.0
+        val_eg = (
+            eg_match["val_num"].sum()
+            if not eg_match.empty and "val_num" in eg_match.columns
+            else 0.0
+        )
 
-        if not eg_match.empty and not df_sub_sub.empty:
+        if (
+            not eg_match.empty
+            and not df_sub_sub.empty
+            and "id" in eg_match.columns
+            and "empenho_global_id" in df_sub_sub.columns
+        ):
             sub_match = df_sub_sub[
-                df_sub_sub["empenho_global_id"].isin(eg_match["id"].astype(str))
+                df_sub_sub["empenho_global_id"]
+                .astype(str)
+                .isin(eg_match["id"].astype(str))
             ]
-            val_sub = sub_match["val_num"].sum()
+            val_sub = (
+                sub_match["val_num"].sum() if "val_num" in sub_match.columns else 0.0
+            )
         else:
             val_sub = 0.0
 
@@ -277,10 +271,12 @@ def render_dashboard():
         st.progress(min(1.0, pct_exec / 100))
 
         if val_eg > 0:
-            df_pie = pd.DataFrame({
-                "Categoria": ["Sub-Empenhado", "Saldo Livre"],
-                "Valor": [val_sub, saldo_restante],
-            })
+            df_pie = pd.DataFrame(
+                {
+                    "Categoria": ["Sub-Empenhado", "Saldo Livre"],
+                    "Valor": [val_sub, saldo_restante],
+                }
+            )
             st.bar_chart(df_pie.set_index("Categoria"))
     else:
         st.info("Nenhum contrato disponível para os filtros selecionados.")
@@ -312,8 +308,8 @@ def render_dashboard():
         df_payments_norm = pd.DataFrame()
 
     for _, ctr in df_contracts_sub.iterrows():
-        ctr_num = str(ctr["contract_number"]).strip()
-        emp_cnpj = str(ctr["company_cnpj"]).strip()
+        ctr_num = str(ctr.get("contract_number", "")).strip()
+        emp_cnpj = str(ctr.get("company_cnpj", "")).strip()
         emp_display = cnpj_to_name.get(emp_cnpj, emp_cnpj)
 
         row = {
@@ -326,25 +322,22 @@ def render_dashboard():
             m_month_num, m_year = m_code.split("/")
             m_code_no_zero = f"{int(m_month_num)}/{m_year}"
 
-            if not df_payments_norm.empty:
+            if (
+                not df_payments_norm.empty
+                and "contract_number" in df_payments_norm.columns
+            ):
                 match = df_payments_norm[
                     (
-                        df_payments_norm["contract_number"]
-                        .astype(str)
-                        .str.strip()
+                        df_payments_norm["contract_number"].astype(str).str.strip()
                         == ctr_num
                     )
-                    & (
-                        df_payments_norm["ref_m_clean"].isin(
-                            [m_code, m_code_no_zero]
-                        )
-                    )
+                    & (df_payments_norm["ref_m_clean"].isin([m_code, m_code_no_zero]))
                 ]
             else:
                 match = pd.DataFrame()
 
             if not match.empty:
-                st_val = match.iloc[0]["current_status"]
+                st_val = match.iloc[0].get("current_status", "")
                 row[m_name] = "OK" if st_val == "PAGO" else st_val
             else:
                 row[m_name] = "---"
@@ -360,10 +353,7 @@ def render_dashboard():
                 " text-align: center;"
             )
         elif val == "---":
-            return (
-                "background-color: #cbd5e1; color: #475569; text-align:"
-                " center;"
-            )
+            return "background-color: #cbd5e1; color: #475569; text-align: center;"
         elif val != "":
             return (
                 "background-color: #fef08a; color: #854d0e; font-weight: bold;"

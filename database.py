@@ -1,4 +1,3 @@
-# database.py
 import gspread
 import pandas as pd
 import streamlit as st
